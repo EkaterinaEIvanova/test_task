@@ -1,0 +1,94 @@
+# review: Неверно оформлен порядок следования импортов, это подробнее описано в стандарте PEP8.
+from job import Job, get_and_write_data, delete_file, copy_file
+from logger import logger
+import multiprocessing
+
+# review: А нам точно необходима эта функция?
+def coroutine(f):
+    def wrap(*args, **kwargs):
+        gen = f(*args, **kwargs)
+        gen.send(None)
+        return gen
+    return wrap
+
+
+"""review: Начиная с python 3.0 нет необходимости явно наследоваться от object. Все классы автоматически относятся
+к категории классов «нового стиля», независимо от того, наследуют ли они явно класс object или нет.
+- опциональные параметры заданы, но нигде не используются. Необходимо добавить проверку этих параметров.
+- не сохраняется статус задач, не понятно работает задача, завершила она свою работу или произошел сбой. Я бы добавила к
+классу Job параметр статус с определенными состоянием: не выполнено, в процессе, успешно, завершено с ошибкой.
+Ну и соотвественно в процессе работы изменять статус. Надо также предусмотреть сохранение какого!то минимального набора
+ параметров
+параметров из класса Job в файл или БД на случай резервного восстановления.
+Вообще можно ознакомиться с работой библиотеки schedule, она синхронная, но понять общий смысл работы, как все должно
+быть организовано поможет. https://github.com/dbader/schedule/blob/master/schedule/__init__.py
+Также необходимо добавить нормальное логирование, обработку исключительных ситуаций и когда классы будут реализованы,
+необходимо покрыть свой код тестами.
+"""
+class Scheduler(object):
+# review: В соответствии с требованиями к заданию необходимо использовать тайпинг, например max_working_time: int = 1
+    def __init__(
+            self,
+            max_working_time=1,
+            tries=0,
+            dependencies=(),
+            start_at=None,
+    ):
+"""review: Не думаю, что здесь требуется вызов конструктора родительского класса. Нет действий которе нам необходимо
+там переопределить, а для инициализации созданного объекта достаточно текущего конструктора."""
+        super().__init__()
+# review: встроенный тип 'list' не может быть параметризован немедленно, для этих целей используйте List из модуля
+# typing, то есть это будет выглядеть как List[float]
+        self.task_list: list[Job] = []
+# review: необходимо использовать тайпинг
+        self.start_at = start_at
+        self.max_working_time = max_working_time
+        self.tries = tries
+"""review: Слишком сложно, достаточно написать dependencies if dependencies else None. А вообще подумайте, может
+None сделать значением по умолчанию"""
+        self.dependencies = dependencies if dependencies is not None else None
+
+"""Не уверена, что использования мультипроцессинга здесь обязательно. Например для CPU-bound задач это будет очень дорого,
+в плане накладных расходов. Да и курс у нас все-таки asyncio. Логичнее выполнение каждой джобы обернуть в task,
+далее создать список их этих task и выполнить используя например wait."""
+    @coroutine
+    def schedule(self):
+        processes = []
+        while True:
+            task_list = (yield)
+            print(task_list)
+            for task in task_list:
+                logger.info(f'Планировщик: запускаю задачу - {task.name}')
+                p = multiprocessing.Process(target=task.run, args=(condition, url),)
+                p.start()
+                processes.append(p)
+            for process in processes:
+                logger.info(process)
+                process.join()
+                logger.info(f' process {process} stopped!')
+
+    def run(self, jobs: tuple):
+        gen = self.schedule()
+        gen.send(jobs)
+
+
+if __name__ == '__main__':
+    condition = multiprocessing.Condition()
+    url = 'https://official-joke-api.appspot.com/random_joke'
+    job1 = Job(
+        func=get_and_write_data,
+        name='Запрос в сеть',
+        args=(condition, url),
+    )
+    job2 = Job(
+        func=copy_file,
+        name='Удалить файл',
+        args=(condition, ),
+    )
+    job3 = Job(
+        func=delete_file,
+        name='Скопировать файл',
+        args=(condition,),
+    )
+    g = Scheduler()
+    g.run((job1, job2, job3))
